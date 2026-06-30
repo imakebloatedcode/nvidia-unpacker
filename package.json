@@ -1,0 +1,23 @@
+{
+  "name": "nvidia-unpacker",
+  "version": "1.0.0",
+  "description": "Install the unpacked nvidia driver into a directory without root or messing with the nvidia installer",
+  "keywords": [
+    "Nvidia"
+  ],
+  "license": "MIT",
+  "author": "imakebloatedcode",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "pretest": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "cac": "^7.0.0"
+  }
+}
