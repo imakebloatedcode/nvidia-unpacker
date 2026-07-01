@@ -1,6 +1,6 @@
 import { cac } from "cac";
 import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -109,35 +109,12 @@ cli
         throw new Error("Nothing is enabled!");
       }
     }
-    const temporaryDirectory = join(
-      tmpdir(),
-      "nvidia-unpack-" + Math.random().toString(36).slice(2),
-    );
-    try {
-      // Extract
-      {
-        const processInstance = spawn(
-          "sh",
-          [
-            resolve(installerPath),
-            "--extract-only",
-            "--target",
-            temporaryDirectory,
-          ],
-          { stdio: "inherit" },
-        );
-        const [code] = await once(processInstance, "close");
-        if (code !== 0) {
-          throw new Error(
-            `Aborting as process exited with non-0 exit code ${code}`,
-          );
-        } else {
-          console.log("Command exited successfully");
-        }
-      }
+    async function unpack(path: string) {
+      const absoluteOutput = resolve(output);
+      const absoluteInputPath = resolve(path);
       // Unpack
       {
-        const manifest = await getManifest(temporaryDirectory);
+        const manifest = await getManifest(path);
         const architectureLibPaths = {
           ...(lib32 === undefined ? {} : { "32": lib32 as string }),
           ...(lib64 === undefined ? {} : { "64": lib64 as string }),
@@ -155,7 +132,7 @@ cli
           etcDirectory: etcPath as string,
           hasSystemd: enableSystemd as boolean,
         });
-        console.log(`Installing into ${resolve(output)} ...`);
+        console.log(`Installing into ${absoluteOutput} ...`);
         let includeType: "docs" | "nondocs" | "all";
         if (includeDocs && !includeNonDocs) {
           includeType = "docs";
@@ -167,12 +144,12 @@ cli
         const disallowlistBase = includeInstaller ? [] : ["INSTALLER_BINARY"];
         await instance.install(
           manifest,
-          temporaryDirectory,
-          output,
+          absoluteInputPath,
+          absoluteOutput,
           (modules as (keyof typeof MODULE_GROUP_TO_ITEMS)[]).flatMap(
             (v) => MODULE_GROUP_TO_ITEMS[v],
           ),
-          virtualOutput ?? output,
+          virtualOutput ?? output, // Use relative output here
           (
             {
               all: { type: "disallowlist", items: disallowlistBase },
@@ -186,10 +163,42 @@ cli
         );
         console.log("Installation finished.");
       }
-    } finally {
-      console.log("Cleaning up...");
-      await rm(temporaryDirectory, { recursive: true, force: true });
-      console.log("Cleaned up. Exiting...");
+    }
+    if ((await stat(installerPath)).isDirectory() === true) {
+      await unpack(installerPath);
+    } else {
+      const temporaryDirectory = join(
+        tmpdir(),
+        "nvidia-unpack-" + Math.random().toString(36).slice(2),
+      );
+      try {
+        // Extract
+        {
+          const processInstance = spawn(
+            "sh",
+            [
+              resolve(installerPath),
+              "--extract-only",
+              "--target",
+              temporaryDirectory,
+            ],
+            { stdio: "inherit" },
+          );
+          const [code] = await once(processInstance, "close");
+          if (code !== 0) {
+            throw new Error(
+              `Aborting as process exited with non-0 exit code ${code}`,
+            );
+          } else {
+            console.log("Command exited successfully");
+          }
+        }
+        await unpack(temporaryDirectory);
+      } finally {
+        console.log("Cleaning up...");
+        await rm(temporaryDirectory, { recursive: true, force: true });
+        console.log("Cleaned up. Exiting...");
+      }
     }
   });
 
