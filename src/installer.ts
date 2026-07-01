@@ -35,7 +35,7 @@ export class NvidiaInstaller<T extends "32" | "64"> {
     this.options = options;
   }
   private getItemArch(entry: ManifestEntry) {
-    const mapping = { NATIVE: "32", COMPAT32: "64" } as const;
+    const mapping = { NATIVE: "64", COMPAT32: "32" } as const;
     const arch = entry.properties[0];
     if (arch) {
       if (arch in mapping) {
