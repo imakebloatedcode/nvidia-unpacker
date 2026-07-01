@@ -73,7 +73,6 @@ cli
     default: "/etc",
   })
   .action(async (installerPath, modules, options) => {
-    console.log(options);
     // Validation
     const {
       output,
@@ -117,7 +116,6 @@ cli
     try {
       // Extract
       {
-        console.log(resolve(installerPath));
         const processInstance = spawn(
           "sh",
           [
