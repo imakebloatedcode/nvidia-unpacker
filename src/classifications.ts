@@ -49,4 +49,8 @@ export const MODULE_GROUP_TO_ITEMS = {
   ],
 } as const;
 
-export const DOCUMENTATION_FILE_TYPES = ["MANPAGE", "DOCUMENTATION"] as const;
+export const DOCUMENTATION_FILE_TYPES = [
+  "MANPAGE",
+  "NVIDIA_MODPROBE_MANPAGE",
+  "DOCUMENTATION",
+] as const;
