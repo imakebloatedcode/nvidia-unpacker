@@ -2,55 +2,9 @@ import { join, resolve } from "node:path";
 import { Manifest, ManifestEntry, parseManifest } from "./manifest";
 import { chmod, copyFile, mkdir, readFile, symlink } from "node:fs/promises";
 
-// These lists change between versions but are very useful
-const KERNEL_BOTH = ["nvswitch", "nvlink", "resman", "uvm"];
-export const MODULE_GROUP_TO_ITEMS = {
-  kernel_module_open: [
-    "open_nvkms",
-    "open_nvidia_drm",
-    "open_nvidia_peermem",
-    ...KERNEL_BOTH,
-  ],
-  kernel_module_closed: [
-    "nvkms",
-    "nvidia_drm",
-    "nvidia_peermem",
-    ...KERNEL_BOTH,
-  ],
-  desktop_handling: ["xdriver", "xutils"],
-  management: ["nvml", "nvpd", "nvtopps"],
-  setup: ["installer"], // This includes documentation along with the installer.
-  // Everything else
-  core: [
-    // Graphics api
-    "opengl",
-    "egl",
-    "vulkansc",
-    // Bunch more stuff
-    "compiler",
-    "nvgpucomp",
-    "nvpresent",
-    "encodeapi",
-    "nvapi",
-    "nvcuvid",
-    "nvfbc",
-    "vdpau",
-    "pcc",
-    "nvlibpkcs11",
-    "nvalloc",
-    "gpgpu",
-    "gpgpucomp",
-    "gpgpudbg",
-    "nvsandboxutils",
-    // AI
-    "ngx",
-    // Ray tracing
-    "optix",
-    "raytracing",
-    // You can look this one up
-    "opticalflow",
-  ],
-} as const;
+// For backwards compatibility. TODO: remove on next major release
+export { MODULE_GROUP_TO_ITEMS } from "./classifications";
+
 export async function getManifest(root: string) {
   const manifestData = new TextDecoder().decode(
     await readFile(join(root, ".manifest")),
@@ -67,6 +21,7 @@ export interface NvidiaInstallerOptions<T extends "32" | "64"> {
   usrLibPath: string; // Usually /usr/lib
   usrSharePath: string; // Usually /usr/share
   usrBinDirectory: string; // Usually /usr/bin
+  etcDirectory: string; // Usually /etc/systemd
   firmwareDirectory: string; // Usually /lib/firmware
 }
 
@@ -91,6 +46,7 @@ export class NvidiaInstaller<T extends "32" | "64"> {
         );
       }
     } else {
+      console.log(entry);
       throw new Error(
         "Item does not have a properties entry that we were trying to interpret as a cpu architecture",
       );
@@ -173,7 +129,7 @@ export class NvidiaInstaller<T extends "32" | "64"> {
 
   // Private
   private internalUtilityHandler(entry: ManifestEntry) {
-    if (this.shouldIncludeArchedEntry(entry, true)) {
+    if (!entry.properties[0] || this.shouldIncludeArchedEntry(entry, true)) {
       return {
         type: "flatDirectoryOutput",
         directory: `${this.options.usrLibPath}/nvidia`,
@@ -271,6 +227,7 @@ export class NvidiaInstaller<T extends "32" | "64"> {
       // Utility binaries
       UTILITY_BINARY: this.publicBinaryHandler,
       UTILITY_BIN_SYMLINK: this.publicBinarySymlinkHandler,
+      INSTALLER_BINARY: this.publicBinaryHandler,
       // Modprobe entries
       NVIDIA_MODPROBE: this.directPathHandler,
       NVIDIA_MODPROBE_MANPAGE: this.manpageHandler,
@@ -331,12 +288,29 @@ export class NvidiaInstaller<T extends "32" | "64"> {
         if (this.shouldIncludeArchedEntry(entry)) {
           return {
             type: "flatDirectoryOutput",
-            directory: `${this.options.usrLibPath}/nvidia/wine`,
+            directory: `${this.getArchedUsrLibPath(entry)}/nvidia/wine`,
           };
         }
       },
       // Systemd
       SYSTEMD_UNIT: () => {
+        if (this.options.hasSystemd) {
+          return {
+            type: "unflatDirectoryOutput",
+            directory: this.options.usrLibPath,
+          };
+        }
+      },
+      SYSTEMD_UNIT_SYMLINK: (entry) => {
+        if (this.options.hasSystemd) {
+          return {
+            type: "symlink",
+            from: `${this.options.usrLibPath}/systemd/system/${entry.path}`,
+            toDirectory: `${this.options.etcDirectory}/systemd/system/${entry.properties[0]!}`, // UNSAFE
+          };
+        }
+      },
+      SYSTEMD_SLEEP_SCRIPT: () => {
         if (this.options.hasSystemd) {
           return {
             type: "unflatDirectoryOutput",
@@ -368,6 +342,12 @@ export class NvidiaInstaller<T extends "32" | "64"> {
     unpackedInstallerBase: string,
     includesModules: string[],
     symlinkBase: string = unpackedInstallerBase,
+    fileTypeFiltering:
+      | { type: "allowlist"; items: string[] | readonly string[] }
+      | { type: "disallowlist"; items: string[] | readonly string[] } = {
+      type: "disallowlist",
+      items: [],
+    },
   ) {
     // Generate handlers
     const handlers: { handler: FileHandling; entry: ManifestEntry }[] = [];
@@ -376,6 +356,21 @@ export class NvidiaInstaller<T extends "32" | "64"> {
       for (const entry of parsedFile.entries) {
         const entryType = entry.type;
         if (includesModules.includes(entry.moduleName)) {
+          if (fileTypeFiltering.type === "allowlist") {
+            if (!fileTypeFiltering.items.includes(entryType)) {
+              // Skip item
+              continue;
+            }
+          } else if (fileTypeFiltering.type === "disallowlist") {
+            if (fileTypeFiltering.items.includes(entryType)) {
+              // Skip item
+              continue;
+            }
+          } else {
+            throw new Error(
+              `Unsupported file type filtering type ${(fileTypeFiltering as any).type}`,
+            );
+          }
           if (entryType in handlerMapping) {
             const handler = handlerMapping[entryType]!.call(this, entry); // SAFE
             if (handler) {

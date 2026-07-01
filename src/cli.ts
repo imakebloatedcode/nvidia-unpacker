@@ -9,6 +9,7 @@ import {
   NvidiaInstaller,
 } from "./installer";
 import { once } from "node:events";
+import { DOCUMENTATION_FILE_TYPES } from "./classifications";
 
 const cli = cac();
 
@@ -21,6 +22,18 @@ cli
   .option(
     "--virtual-output <virtual output>",
     "The directory that the installation will actually be ran from",
+  )
+  // Documentation handling
+  .option("--no-docs", "Disable documentation (documentation is on by default)")
+  .option(
+    "--only-docs",
+    "Only include documentation for these modules, nothing else",
+    { default: false },
+  )
+  .option(
+    "--include-installer",
+    "Include the nvidia installer (disabled by default, requires the core module to be enabled)",
+    { default: false },
   )
   // Platform data
   .option("--lib32 [lib32]", "The directory for the 32 bit libraries")
@@ -56,6 +69,9 @@ cli
       default: "/usr/bin",
     },
   )
+  .option("--etc-path [etc-path]", "The path of the etc directory", {
+    default: "/etc",
+  })
   .action(async (installerPath, modules, options) => {
     console.log(options);
     // Validation
@@ -70,7 +86,11 @@ cli
       usrLibPath,
       usrSharePath,
       usrBinPath,
+      etcPath,
+      includeInstaller,
     } = options;
+    let includeNonDocs: boolean = true;
+    let includeDocs: boolean = true;
     {
       if (!["32", "64"].includes(nativeArch.toString())) {
         throw new Error(`Unknown system architecture ${nativeArch}`);
@@ -79,6 +99,15 @@ cli
         throw new Error(
           `Unknown modules ${(modules as string[]).filter((v) => !(v in MODULE_GROUP_TO_ITEMS)).join(", ")}`,
         );
+      }
+      if (options.docs === false) {
+        includeDocs = false;
+      }
+      if (options.onlyDocs === true) {
+        includeNonDocs = false;
+      }
+      if (includeDocs === false && includeNonDocs === false) {
+        throw new Error("Nothing is enabled!");
       }
     }
     const temporaryDirectory = join(
@@ -125,9 +154,19 @@ cli
           usrLibPath: usrLibPath as string,
           usrSharePath: usrSharePath as string,
           usrBinDirectory: usrBinPath as string,
+          etcDirectory: etcPath as string,
           hasSystemd: enableSystemd as boolean,
         });
         console.log(`Installing into ${resolve(output)} ...`);
+        let includeType: "docs" | "nondocs" | "all";
+        if (includeDocs && !includeNonDocs) {
+          includeType = "docs";
+        } else if (includeNonDocs && !includeDocs) {
+          includeType = "nondocs";
+        } else {
+          includeType = "all";
+        }
+        const disallowlistBase = includeInstaller ? [] : ["INSTALLER_BINARY"];
         await instance.install(
           manifest,
           temporaryDirectory,
@@ -136,6 +175,16 @@ cli
             (v) => MODULE_GROUP_TO_ITEMS[v],
           ),
           virtualOutput ?? output,
+          (
+            {
+              all: { type: "disallowlist", items: disallowlistBase },
+              docs: { type: "allowlist", items: DOCUMENTATION_FILE_TYPES },
+              nondocs: {
+                type: "disallowlist",
+                items: [...disallowlistBase, ...DOCUMENTATION_FILE_TYPES],
+              },
+            } as const
+          )[includeType],
         );
         console.log("Installation finished.");
       }
